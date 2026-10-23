@@ -1,0 +1,12 @@
+{
+    "name": "solar-system-explorer",
+    "version": "1.0.0",
+    "description": "Simulación astronómica 3D del Sistema Solar que se ejecuta localmente en el navegador.",
+    "private": true,
+    "type": "module",
+    "scripts": {
+        "test": "node tests/astronomy.test.mjs && node tests/satellites.test.mjs",
+        "build:standalone": "python tools/build_standalone.py",
+        "update:satellites": "python tools/update_satellite_data.py"
+    }
+}

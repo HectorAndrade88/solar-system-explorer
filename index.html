@@ -1,0 +1,311 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+    <meta name="description" content="Simulación astronómica 3D del Sistema Solar calculada localmente a partir de la fecha y hora del sistema.">
+    <meta name="color-scheme" content="dark">
+    <title>Solar System Explorer</title>
+    <link rel="icon" href="assets/icon.svg" type="image/svg+xml">
+    <link rel="stylesheet" href="css/styles.css">
+    <!-- Todas las dependencias se resuelven a archivos locales: no hay CDN. -->
+    <script type="importmap">
+        {
+            "imports": {
+                "three": "./vendor/three/three.module.js",
+                "three/addons/": "./vendor/three/addons/"
+            }
+        }
+    </script>
+</head>
+<body>
+<div id="app" class="app">
+    <div id="viewport" class="viewport" role="img" aria-label="Escena 3D del Sistema Solar"></div>
+    <div id="label-layer" class="label-layer"></div>
+
+    <header class="hud top-bar">
+        <div class="brand">
+            <svg class="brand__logo" viewBox="0 0 40 40" aria-hidden="true">
+                <circle cx="20" cy="20" r="5.5" fill="url(#logo-sun)"/>
+                <ellipse cx="20" cy="20" rx="17" ry="7" fill="none" stroke="currentColor" stroke-opacity="0.55" stroke-width="1.2" transform="rotate(-24 20 20)"/>
+                <circle cx="35.2" cy="13.6" r="2.3" fill="#5ea8ff"/>
+                <defs>
+                    <radialGradient id="logo-sun">
+                        <stop offset="0" stop-color="#fff6d8"/>
+                        <stop offset="1" stop-color="#ffb347"/>
+                    </radialGradient>
+                </defs>
+            </svg>
+            <div>
+                <h1 class="brand__title">Solar System Explorer</h1>
+                <p class="brand__subtitle">Efemérides calculadas en tu navegador</p>
+            </div>
+        </div>
+
+        <div class="clock">
+            <div class="clock__date" id="clock-date">-- --- ----</div>
+            <div class="clock__time" id="clock-time">--:--:--</div>
+            <div class="clock__zone"><span id="clock-offset">UTC</span><span class="clock__sep">·</span><span id="clock-zone"></span></div>
+        </div>
+
+        <div class="status">
+            <span id="mode-badge" class="badge badge--live">Tiempo real</span>
+            <div class="status__row">UTC <strong id="clock-utc">--:--:--</strong></div>
+            <div class="status__row">Velocidad <strong id="speed-badge">1×</strong></div>
+        </div>
+    </header>
+
+    <nav class="hud view-bar" aria-label="Vistas de cámara">
+        <button type="button" class="chip" data-view="solar-system">Vista Sistema Solar</button>
+        <button type="button" class="chip" data-view="earth">Vista Tierra</button>
+        <button type="button" class="chip" data-view="moon">Vista Luna</button>
+        <button type="button" class="chip" data-view="sun">Vista Sol</button>
+        <button type="button" class="chip" data-view="planets">Vista Planetas</button>
+        <button type="button" class="chip" data-view="satellites">Vista Starlink</button>
+        <button type="button" class="chip chip--accent" data-view="sky">Vista desde la Tierra</button>
+        <button type="button" class="chip" data-view="reset">Restablecer cámara</button>
+    </nav>
+
+    <aside id="panel-time" class="hud panel panel--left" aria-label="Control de tiempo y opciones">
+        <section class="panel__section">
+            <h2 class="panel__title">Control de tiempo</h2>
+            <div class="transport">
+                <button type="button" id="btn-reverse" class="icon-btn" title="Invertir el sentido del tiempo" aria-pressed="false">⇄</button>
+                <button type="button" id="btn-play" class="btn">▶ Reproducir</button>
+                <button type="button" id="btn-pause" class="btn">⏸ Pausar</button>
+                <button type="button" id="btn-realtime" class="btn">↺ Tiempo real</button>
+            </div>
+
+            <div class="field">
+                <div class="field__label">Velocidad <output id="speed-output" class="field__value">1×</output></div>
+                <div class="speed">
+                    <button type="button" id="btn-slower" class="icon-btn icon-btn--small" title="Más lento (−)">◀</button>
+                    <input id="speed-slider" type="range" min="0" max="6" step="1" value="0" aria-label="Velocidad de simulación">
+                    <button type="button" id="btn-faster" class="icon-btn icon-btn--small" title="Más rápido (+)">▶</button>
+                </div>
+                <div id="speed-ticks" class="speed__ticks" aria-hidden="true"></div>
+                <p id="speed-hint" class="hint"></p>
+            </div>
+
+            <dl class="readout">
+                <div><dt>Fecha</dt><dd id="sim-date">--/--/----</dd></div>
+                <div><dt>Hora</dt><dd id="sim-time">--:--:--</dd></div>
+                <div><dt>Día juliano</dt><dd id="sim-jd">—</dd></div>
+            </dl>
+            <p id="precision-warning" class="warning" hidden>Fuera de 1800–2050 los elementos orbitales aproximados pierden precisión.</p>
+        </section>
+
+        <section class="panel__section">
+            <h2 class="panel__title">Fecha de simulación</h2>
+            <form id="date-form" class="date-form" novalidate>
+                <label class="field">
+                    <span class="field__label">Fecha</span>
+                    <input id="input-date" type="date" min="1000-01-01" max="3000-12-31" required>
+                </label>
+                <label class="field">
+                    <span class="field__label">Hora</span>
+                    <input id="input-time" type="time" step="1" required>
+                </label>
+                <div class="date-form__actions">
+                    <button type="submit" class="btn btn--primary">Aplicar</button>
+                    <button type="button" id="btn-now" class="btn">Usar fecha actual</button>
+                </div>
+                <p id="date-error" class="form-error" role="alert" hidden></p>
+            </form>
+        </section>
+
+        <section id="satellite-section" class="panel__section">
+            <h2 class="panel__title">Satélites Starlink</h2>
+            <label class="toggle"><input type="checkbox" data-config="showSatellites"><span>Mostrar constelación (K)</span></label>
+            <dl class="readout readout--compact">
+                <div><dt>En órbita</dt><dd id="satellite-count">—</dd></div>
+                <div><dt>Lanzamientos</dt><dd id="launch-count">—</dd></div>
+                <div><dt>Datos orbitales del</dt><dd id="satellite-data-date">—</dd></div>
+            </dl>
+            <p id="satellite-age" class="satellite-age"></p>
+            <button type="button" id="btn-history" class="btn btn--block btn--primary">Historial de lanzamientos (U)</button>
+            <p class="hint">Haga clic sobre un satélite para ver su órbita, o elija una misión del historial para simular su lanzamiento.</p>
+        </section>
+
+        <section id="sky-section" class="panel__section" hidden>
+            <h2 class="panel__title">Observador en la Tierra</h2>
+            <form id="observer-form" class="observer-form" novalidate>
+                <label class="field">
+                    <span class="field__label">Latitud (°)</span>
+                    <input id="input-latitude" type="number" min="-90" max="90" step="0.001" required>
+                </label>
+                <label class="field">
+                    <span class="field__label">Longitud (°)</span>
+                    <input id="input-longitude" type="number" min="-180" max="180" step="0.001" required>
+                </label>
+                <button type="submit" class="btn btn--primary">Aplicar</button>
+            </form>
+            <p class="hint">Positivo: norte y este. <span id="observer-name"></span></p>
+            <p id="sky-status" class="sky-status"></p>
+            <label class="toggle"><input type="checkbox" id="toggle-ground" checked><span>Mostrar suelo y horizonte</span></label>
+            <label class="toggle"><input type="checkbox" data-config="magnifySkyBodies"><span>Ampliar Sol y Luna (×4)</span></label>
+        </section>
+
+        <details class="panel__section" id="scale-section">
+            <summary class="panel__title">Escala visual</summary>
+            <div class="field" data-scale="planetScale">
+                <div class="field__label">Tamaño de planetas <output class="field__value"></output></div>
+                <input type="range" min="0" max="1000" aria-label="Escala de tamaño de planetas">
+            </div>
+            <div class="field" data-scale="sunScale">
+                <div class="field__label">Tamaño del Sol <output class="field__value"></output></div>
+                <input type="range" min="0" max="1000" aria-label="Escala de tamaño del Sol">
+            </div>
+            <div class="field" data-scale="orbitScale">
+                <div class="field__label">Escala orbital <output class="field__value"></output></div>
+                <input type="range" min="0" max="1000" aria-label="Escala de distancias orbitales">
+            </div>
+            <div class="field" data-scale="moonScale">
+                <div class="field__label">Distancia Tierra–Luna <output class="field__value"></output></div>
+                <input type="range" min="0" max="1000" aria-label="Escala de la distancia Tierra-Luna">
+            </div>
+            <label class="field">
+                <span class="field__label">Distancias</span>
+                <select id="distance-mode">
+                    <option value="linear">Proporcionales (lineal)</option>
+                    <option value="compressed">Comprimidas (√r)</option>
+                </select>
+            </label>
+            <button type="button" id="btn-reset-scale" class="btn btn--block">Restablecer escalas</button>
+        </details>
+
+        <details class="panel__section">
+            <summary class="panel__title">Visualización</summary>
+            <label class="toggle"><input type="checkbox" data-config="showOrbits"><span>Órbitas (O)</span></label>
+            <label class="toggle"><input type="checkbox" data-config="showLabels"><span>Etiquetas (L)</span></label>
+            <label class="toggle"><input type="checkbox" data-config="showConstellations"><span>Constelaciones (C)</span></label>
+            <label class="toggle"><input type="checkbox" data-config="showMilkyWay"><span>Vía Láctea</span></label>
+            <label class="toggle"><input type="checkbox" data-config="showAxes"><span>Ejes de rotación (X)</span></label>
+            <label class="toggle"><input type="checkbox" data-config="bloom"><span>Resplandor (bloom)</span></label>
+            <label class="toggle"><input type="checkbox" id="toggle-clouds" checked><span>Nubes terrestres</span></label>
+        </details>
+    </aside>
+
+    <aside id="panel-info" class="hud panel panel--right" aria-label="Objeto seleccionado">
+        <p class="panel__eyebrow">Objeto seleccionado</p>
+        <header class="object-header">
+            <span id="info-symbol" class="object-header__symbol" aria-hidden="true"></span>
+            <div>
+                <h2 id="info-name" class="object-header__name"></h2>
+                <p id="info-type" class="object-header__type"></p>
+            </div>
+        </header>
+        <div id="moon-phase" class="moon-phase" hidden>
+            <canvas id="moon-phase-canvas" width="128" height="128" aria-hidden="true"></canvas>
+            <p class="hint">Aspecto desde el hemisferio norte</p>
+        </div>
+        <dl id="info-observation" class="data-list data-list--highlight" hidden></dl>
+        <dl id="info-live" class="data-list"></dl>
+        <dl id="info-static" class="data-list data-list--static"></dl>
+        <p id="info-description" class="description"></p>
+        <div id="info-actions" class="info-actions"></div>
+    </aside>
+
+    <nav id="body-bar" class="hud body-bar" aria-label="Cuerpos celestes"></nav>
+
+    <div class="hud corner-tools">
+        <button type="button" id="btn-toggle-left" class="icon-btn" title="Panel de tiempo" aria-controls="panel-time">⏱</button>
+        <button type="button" id="btn-toggle-right" class="icon-btn" title="Panel de información" aria-controls="panel-info">ℹ</button>
+        <button type="button" id="btn-help" class="icon-btn" title="Ayuda y atajos (?)">?</button>
+    </div>
+
+    <div id="sky-compass" class="hud sky-compass" hidden></div>
+
+    <dialog id="help-dialog" class="help-dialog" aria-labelledby="help-title">
+        <h2 id="help-title">Controles</h2>
+        <div class="help-dialog__grid">
+            <section>
+                <h3>Ratón y táctil</h3>
+                <ul>
+                    <li><kbd>Arrastrar</kbd> girar la cámara</li>
+                    <li><kbd>Rueda</kbd> / <kbd>Pellizcar</kbd> zoom</li>
+                    <li><kbd>Clic derecho</kbd> / <kbd>Mayús</kbd> + arrastrar / dos dedos: desplazar</li>
+                    <li><kbd>Clic</kbd> seleccionar · <kbd>Doble clic</kbd> enfocar</li>
+                </ul>
+            </section>
+            <section>
+                <h3>Cámara</h3>
+                <ul>
+                    <li><kbd>←</kbd><kbd>→</kbd><kbd>↑</kbd><kbd>↓</kbd> o <kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> girar</li>
+                    <li><kbd>Q</kbd> / <kbd>E</kbd> acercar / alejar</li>
+                    <li><kbd>Mayús</kbd> + flechas desplazar</li>
+                    <li><kbd>F</kbd> centrar · <kbd>R</kbd> restablecer · <kbd>V</kbd> vista desde la Tierra</li>
+                </ul>
+            </section>
+            <section>
+                <h3>Tiempo</h3>
+                <ul>
+                    <li><kbd>Espacio</kbd> reproducir / pausar</li>
+                    <li><kbd>+</kbd> / <kbd>−</kbd> cambiar velocidad</li>
+                    <li><kbd>T</kbd> volver al tiempo real</li>
+                </ul>
+            </section>
+            <section>
+                <h3>Objetos y capas</h3>
+                <ul>
+                    <li><kbd>0</kbd> Sol · <kbd>1</kbd>–<kbd>8</kbd> planetas · <kbd>9</kbd> Luna</li>
+                    <li><kbd>O</kbd> órbitas · <kbd>L</kbd> etiquetas · <kbd>C</kbd> constelaciones · <kbd>X</kbd> ejes</li>
+                    <li><kbd>K</kbd> satélites Starlink · <kbd>U</kbd> historial de lanzamientos</li>
+                    <li><kbd>H</kbd> ocultar interfaz · <kbd>Esc</kbd> salir / cerrar</li>
+                </ul>
+            </section>
+        </div>
+        <p class="help-dialog__credits">
+            Créditos: motor 3D Three.js (MIT) · texturas de Solar System Scope basadas en datos de NASA (CC BY 4.0) ·
+            catálogo estelar y constelaciones de d3-celestial, Olaf Frohn (BSD-3) · propagación SGP4 con satellite.js (MIT) ·
+            elementos orbitales y catálogo SATCAT de CelesTrak · historial de misiones de Launch Library 2 (The Space Devs).
+            Todos los recursos se cargan localmente.
+        </p>
+        <form method="dialog"><button class="btn btn--primary">Cerrar</button></form>
+    </dialog>
+
+    <dialog id="history-dialog" class="history-dialog" aria-labelledby="history-title">
+        <header class="history-dialog__header">
+            <div>
+                <h2 id="history-title">Historial de lanzamientos Starlink</h2>
+                <p id="history-summary" class="hint"></p>
+            </div>
+            <form method="dialog"><button class="icon-btn" aria-label="Cerrar historial">✕</button></form>
+        </header>
+        <div id="history-chart" class="history-chart" role="group" aria-label="Lanzamientos por año"></div>
+        <div class="history-filters">
+            <input id="history-search" type="search" placeholder="Buscar misión o designador…" aria-label="Buscar misión">
+            <select id="history-site" aria-label="Filtrar por plataforma">
+                <option value="">Todas las plataformas</option>
+            </select>
+            <label class="toggle"><input id="history-tracked" type="checkbox"><span>Solo con satélites visibles</span></label>
+        </div>
+        <div class="history-table-wrap">
+            <table class="history-table">
+                <thead>
+                    <tr><th>Fecha (local)</th><th>Misión</th><th>Plataforma</th><th>Satélites</th><th>Órbita</th></tr>
+                </thead>
+                <tbody id="history-rows"></tbody>
+            </table>
+        </div>
+        <p id="history-count" class="hint"></p>
+    </dialog>
+
+    <div id="loading-screen" class="loading" role="status">
+        <div class="loading__orbit" aria-hidden="true"><span></span></div>
+        <p class="loading__title">Solar System Explorer</p>
+        <p id="loading-message" class="loading__message">Cargando texturas locales…</p>
+        <div class="loading__bar"><div id="loading-progress" class="loading__progress"></div></div>
+    </div>
+
+    <div id="startup-error" class="startup-error" role="alert" hidden>
+        <h2>No se pudo iniciar la simulación</h2>
+        <p id="startup-error-message"></p>
+        <pre id="startup-error-command" hidden>python -m http.server 8000</pre>
+    </div>
+</div>
+
+<script src="js/boot-check.js"></script>
+<script type="module" src="js/main.js"></script>
+</body>
+</html>
